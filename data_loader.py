@@ -6,22 +6,120 @@
 @Version :   2.0
 @Contact :   1104120243@qq.com
 '''
-
 # here put the import lib
-import sys
-sys.path.append("..")
-import soundshapecode
-# import soundshapecode
+import torch
 import numpy as np
-import json
+from sklearn.model_selection import train_test_split
 import pandas as pd
 import pkg_resources
+import json
+import sys
+import pandas as pd
+import pickle
+sys.path.append("/data/NING/2022-Graduation-thesis")
+sys.path.append("../..")
+sys.path.append("..")
+from torch.nn.utils.rnn import pad_sequence
+# import soundshapecode
+import soundshapecode
+
 
 # SSC mode
 SSC_ENCODE_WAY = 'ALL' #'ALL','SOUND','SHAPE'
 
+# 变体字数据集对象
+class VariantWordDataset(torch.utils.data.Dataset):
 
-# Variant 对齐
+    def __init__(self, mode, config, isAligned=False, supply_ratio = False):
+
+        self.isAligned = isAligned
+        self.supply_ratio = supply_ratio
+        self.config = config
+        assert mode in {"train","test"}
+        
+        if mode == "train":
+            try:
+                data = pd.read_csv(self.config.train_set_path, index_col=0)
+                supply_data = pd.read_csv(self.config.train_set_supply_path, index_col=0).sample(frac=supply_ratio, axis=0)
+                data = pd.concat([data, supply_data], axis=0, ignore_index=True)
+            except:
+                print("supply_ratio should set between 0 and 1")
+                data = pd.read_csv(self.config.train_set_path, index_col=0)
+
+
+        else:
+            data = pd.read_csv(self.config.test_set_path, index_col=0)
+
+        self.SourceData = data["raw_data"].tolist()
+        self.TargetData = data["right_data"].tolist()
+
+        self.source_dic = Dictionary.load_from_file(self.config.source_dic_path)
+        self.target_dic = Dictionary.load_from_file(self.config.target_dic_path)
+
+        self.PAD_IDX = self.source_dic.word2idx["[PAD]"]
+        self.BOS_IDX = self.source_dic.word2idx["[BOS]"]
+        self.EOS_IDX = self.source_dic.word2idx["[EOS]"]
+        self.GAP_IDX = self.source_dic.word2idx["[GAP]"]
+    
+    def __split__():
+        pass
+
+    def __len__(self):
+        return len(self.SourceData)
+
+
+    def __getitem__(self, idx):
+
+        if self.isAligned:
+            variantNW = VariantNW()
+            seq1 = self.SourceData[idx]
+            seq2 = self.TargetData[idx]
+        
+
+            variantNW.set_seqs(seq1, seq2)
+            variantNW.propagate()
+            aligned_seq1, aligned_seq2 = variantNW.traceback()
+
+            source = torch.tensor([self.source_dic.word2idx[i] for i in aligned_seq1])
+            target = torch.tensor([self.target_dic.word2idx[i] for i in aligned_seq2])
+
+            sample = [source, target]
+            
+            return sample
+        
+        else:
+            source = torch.tensor([self.source_dic.word2idx[i] for i in self.SourceData[idx]])
+            target = torch.tensor([self.target_dic.word2idx[i] for i in self.TargetData[idx]])
+
+            sample = [source, target]
+
+            return sample
+    
+    def generate_batch(self, data_batch):
+
+        source_batch, target_batch, target_length = [], [], []
+
+        for (source_item, target_item) in data_batch:  # 开始对一个batch中的每一个样本进行处理。
+
+            source_batch.append(source_item)  # 编码器输入序列不需要加起止符
+
+            # 在每个idx序列的首位加上 起始token 和 结束 token
+            target = torch.cat([torch.tensor([self.BOS_IDX]), target_item, torch.tensor([self.EOS_IDX])], dim=0)
+
+            target_batch.append(target)
+            target_length.append(len(target))
+
+        # 以最长的序列为标准进行填充
+        source_batch = pad_sequence(source_batch, padding_value=self.PAD_IDX)  # [de_len,batch_size]
+
+        target_batch = pad_sequence(target_batch, padding_value=self.PAD_IDX)  # [en_len,batch_size]
+
+        target_length =  torch.tensor(target_length, dtype=torch.int64,device="cpu")
+
+        return source_batch, target_batch, target_length, self.isAligned
+
+
+# Variant 对象
 class VariantNW():
     def __init__(self):
         self.seq1 = None
@@ -137,7 +235,6 @@ class VariantNW():
 
         return max(score1, score2, score3)
 
-
     # 字符相似度评分函数
     # char1和char2分别对应来自seq1和seq2
     def __score(self, char2, char1):
@@ -208,6 +305,79 @@ class VariantNW():
         else:
             return False
 
+
+# 字典对象，存储 word 和 index 对应
+class Dictionary(object):
+
+    def __init__(self, word2idx=None, idx2word=None):
+        if word2idx is None:
+            word2idx = {}
+        if idx2word is None:
+            idx2word = {}
+
+        self.word2idx = word2idx
+        self.idx2word = idx2word
+
+
+    # 从data中获取
+    def load_from_data(self, data_path, usecols):
+
+        self.word2idx = self.__word2idx(data_path, usecols)
+        self.idx2word = self.__idx2word(self.word2idx)
+
+
+    # 构建 word -> index 映射
+    def __word2idx(self, data_path, usecols):
+        # 预留一些特殊符号
+        word2idx = {'[PAD]':0, '[BOS]':1, '[EOS]':2, '[UNK]':3, '[MASK]':4, '[GAP]':5}
+
+        data = pd.read_csv(data_path, usecols=[usecols])
+        sentences = data[usecols].tolist()
+        word_list = list(set("".join(sentences)))
+        for i, w in enumerate(word_list):
+            word2idx[w] = i + 6
+        
+        return word2idx
+    
+
+    # 构建 index -> word 映射
+    def __idx2word(self, word2idx):
+
+        idx2word = {i : w for i, w in enumerate(word2idx)}
+        
+        return idx2word
+
+
+    # 保存到文件
+    def dump_to_file(self, path):
+        pickle.dump([self.word2idx, self.idx2word], open(path, 'wb'))
+        print('dictionary dumped to %s' % path)
+
+
+    # 从文件中加载
+    @classmethod
+    def load_from_file(cls, path):
+        print('loading dictionary from %s' % path)
+        word2idx, idx2word = pickle.load(open(path, 'rb'))
+        dic = cls(word2idx, idx2word)
+        dic.word2idx = word2idx
+        dic.idx2word = idx2word
+        return dic
+
+
+    def add_word(self, word):
+        if word not in self.word2idx:
+            self.idx2word.append(word)
+            self.word2idx[word] = len(self.idx2word) - 1
+        return self.word2idx[word]
+
+  
+    def __len__(self):
+        return len(self.idx2word)
+
+
+
+
 # if __name__== "__main__":
 #     variantNW = VariantNW()
     
@@ -256,5 +426,3 @@ class VariantNW():
     # print(aligned_seq1)
     # print(aligned_seq2)
     # print(variantNW.get_aligned_seq_score(aligned_seq1, aligned_seq2))
-
-    

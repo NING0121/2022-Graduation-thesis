@@ -3,49 +3,49 @@ from sklearn.metrics import log_loss
 sys.path.append("../")
 import torch
 from torch import Tensor, logit, nn
-from Model_parts.ConvS2S import ConvS2S
+from Networks.ConvS2S import ConvS2S
 import pytorch_lightning as pl
-from Code.Utils import Dictionary
+from data_loader import Dictionary
 from torchtext.data.metrics import bleu_score
 import numpy as np
 import pickle
+from config import PAD_IDX, BOS_IDX, EOS_IDX, GAP_IDX
 
 
 class ConvS2SModel(pl.LightningModule):
     def __init__(self, config):
         super().__init__()
 
-
-       
-        self.check_name = f"ConvS2SModel-CrossEntropyLoss"
+        self.check_name = f"ConvS2SModel"
         self.config = config
-        self.log_name = f"ConvS2SModel-CrossEntropyLoss-{self.config.embedding_size}_emb-{self.config.out_embedding_size}_outEmb-{str(self.config.convolutions)}_conv"
-        self.loss_fn = torch.nn.CrossEntropyLoss(ignore_index=self.config.PAD_IDX)
+        self.log_name = f"ConvS2SModel-{self.config.embedding_size}_emb-{self.config.out_embedding_size}_outEmb-{str(self.config.convolutions)}_conv"
+        self.loss_fn = torch.nn.CrossEntropyLoss(ignore_index=PAD_IDX)
 
         self.model = ConvS2S(self.config)
         
-        self.source_dict = Dictionary.load_from_file(config.source_dic_path)
-        self.target_dict = Dictionary.load_from_file(config.target_dic_path)
+        self.source_dict = Dictionary.load_from_file(self.config.source_dic_path)
+        self.target_dict = Dictionary.load_from_file(self.config.target_dic_path)
 
         with open(self.config.src2tgt_path, 'rb') as fp:
             self.src2tgt = pickle.load(fp)
 
-    def forward(self, source, target):
+    def forward(self, source, source_length, target):
         
-        logits = self.model.forward(source, target)
+        logits = self.model.forward(source, source_length, target)
             
         return logits
 
 
     def create_mask(self, src, tgt):
+
         src_seq_len = src.shape[0]
         tgt_seq_len = tgt.shape[0]
 
         tgt_mask = self.generate_square_subsequent_mask(tgt_seq_len)
         src_mask = torch.zeros((src_seq_len, src_seq_len),device=self.device).type(torch.bool)
 
-        src_padding_mask = (src == self.config.PAD_IDX).transpose(0, 1)
-        tgt_padding_mask = (tgt == self.config.PAD_IDX).transpose(0, 1)
+        src_padding_mask = (src == PAD_IDX).transpose(0, 1)
+        tgt_padding_mask = (tgt == PAD_IDX).transpose(0, 1)
         return src_mask, tgt_mask, src_padding_mask, tgt_padding_mask
     
     def generate_square_subsequent_mask(self, sz):
@@ -53,7 +53,6 @@ class ConvS2SModel(pl.LightningModule):
         mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
         return mask
 
-    
     def confusion_matrix(self, src, decoder_out, y_ture, PAD_IDX):
         """
             给定变体字序列、生成序列以及标签序列，生成混淆矩阵
@@ -134,15 +133,15 @@ class ConvS2SModel(pl.LightningModule):
         return recall
 
     def BLEU_score(self, decoder_out, y_ture):
-
         # 预测值
         y_pred = decoder_out[:,:,:].argmax(axis=2).reshape(-1)
 
         # 真实值
         y_ture = y_ture[:,:].reshape(-1)
 
-        y_pred = np.delete(Tensor.cpu(y_pred).numpy() , np.where(Tensor.cpu(y_pred).numpy() <= self.config.GAP_IDX))
-        y_ture = np.delete(Tensor.cpu(y_ture).numpy() , np.where(Tensor.cpu(y_ture).numpy() <= self.config.GAP_IDX))
+        y_pred = np.delete(Tensor.cpu(y_pred).numpy() , np.where(Tensor.cpu(y_ture).numpy() <= GAP_IDX))
+        y_ture = np.delete(Tensor.cpu(y_ture).numpy() , np.where(Tensor.cpu(y_ture).numpy() <=GAP_IDX))
+
 
         candidate = [str(i) for i in y_pred.tolist()]
         reference = [str(i) for i in y_ture.tolist()]
@@ -152,7 +151,8 @@ class ConvS2SModel(pl.LightningModule):
 
 
     def shared_step(self, batch, stage):
-        src, tgt = batch
+
+        src, tgt, tgt_length, isAligned = batch
 
         src = src.to(self.device).transpose(0,1)  # [ batch_size, src_len ]
         tgt = tgt.to(self.device).transpose(0,1)  # [ batch_size, tgt_len ]
@@ -163,48 +163,45 @@ class ConvS2SModel(pl.LightningModule):
         
         decoder_out, lprobs = self.model(src, src_length, tgt_input)  
         tgt = tgt_input.reshape(-1)
+
+        ### 计算loss  
         loss = self.loss_fn(lprobs, tgt)
 
-
-        ### 计算loss
-        
-
-        TP, FP, FN = self.confusion_matrix(src, decoder_out, tgt_input, self.config.PAD_IDX)
         BLEU_SCORE = self.BLEU_score(decoder_out, tgt_input)
-
-        return {"loss": loss,
-                "TP": TP,
-                "FN": FN,
-                "FP": FP, 
-                "BLEU_SCORE":BLEU_SCORE
-                }
+        result = {"loss": loss.mean(),
+                       "BLEU_SCORE":BLEU_SCORE}
+        
+        if isAligned:
+            TP, FP, FN = self.confusion_matrix(src, decoder_out, tgt_input, PAD_IDX)
+            result["TP"] = TP
+            result["FP"] = FP
+            result["FN"] = FN
+        
+        return result
 
 
 
 
     def shared_epoch_end(self, outputs, stage):
         loss = torch.mean(torch.FloatTensor([i["loss"] for i in outputs]))
-        tp = torch.Tensor([x["TP"] for x in outputs]).to('cpu').sum().item()
-        fn = torch.Tensor([x["FN"] for x in outputs]).to('cpu').sum().item()
-        fp = torch.Tensor([x["FP"] for x in outputs]).to('cpu').sum().item()
         BLEU_SCORE = torch.Tensor([x["BLEU_SCORE"] for x in outputs]).to('cpu').mean().item()
-
-        precision = self.precision_score(tp, fp)
-        recall = self.recall_score(tp, fn)
-        f1 = self.f1_score(precision, recall)
-
         metrics = {
             f"{stage}_loss": loss.item(),
-            f"{stage}_precison": precision,
-            f"{stage}_recall": recall,
-            f"{stage}_f1": f1,
-            f"{stage}_BLEU_SCORE": BLEU_SCORE,
-        }
+            f"{stage}_BLEU_SCORE": BLEU_SCORE,}
         
+        if "TP" in outputs[0].keys():
+            tp = torch.Tensor([x["TP"] for x in outputs]).to('cpu').sum().item()
+            fn = torch.Tensor([x["FN"] for x in outputs]).to('cpu').sum().item()
+            fp = torch.Tensor([x["FP"] for x in outputs]).to('cpu').sum().item()
+            precision = self.precision_score(tp, fp)
+            recall = self.recall_score(tp, fn)
+            f1 = self.f1_score(precision, recall)
+            metrics[ f"{stage}_precison"] = precision
+            metrics[ f"{stage}_recall"] = recall
+            metrics[ f"{stage}_f1"] = f1
+
         self.log_dict(metrics, prog_bar=True)
         self.logger.log_metrics(metrics)
-
-
 
 
 
@@ -235,8 +232,6 @@ class ConvS2SModel(pl.LightningModule):
         weight_decay = 1e-6  # l2正则化系数
         # 假如有两个网络，一个encoder一个decoder
         # optimizer = torch.optim.Adam([{'encoder_params': self.encoder.parameters()}, {'decoder_params': self.decoder.parameters()}], lr=1e-3, weight_decay=weight_decay)
-
-
         # 同样，如果只有一个网络结构，就可以更直接了
         optimizer = torch.optim.Adam(self.parameters(), lr=1e-3, weight_decay=weight_decay)
 

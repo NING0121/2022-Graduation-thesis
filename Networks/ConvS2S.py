@@ -1,4 +1,3 @@
-from turtle import Turtle
 import torch
 import torch.nn as nn
 import sys
@@ -6,12 +5,11 @@ sys.path.append("..")
 import torch.nn.functional as F
 from torch.nn.utils.rnn import pad_packed_sequence as unpack
 from torch.nn.utils.rnn import pack_padded_sequence as pack
-from Model_parts.ConvS2S_parts import *
-from Code.Utils.config import Config
+from Networks.ConvS2S_parts import *
+from config import arg_parse
+from config import PAD_IDX, SOURCE_VOCAB_SIZE, TARGET_VOCAB_SIZE
 
-
-
-config = Config()
+config = arg_parse()
 
 class FConvEncoder(nn.Module):
     """
@@ -37,8 +35,8 @@ class FConvEncoder(nn.Module):
         )
         self.num_attention_layers = None
 
-        num_embeddings = config.source_vocab_size
-        self.padding_idx = config.PAD_IDX
+        num_embeddings = SOURCE_VOCAB_SIZE
+        self.padding_idx = PAD_IDX
         self.embed_tokens = Embedding(num_embeddings, config.embedding_size , self.padding_idx)
 
 
@@ -275,8 +273,8 @@ class FConvDecoder(nn.Module):
                 "length equal to the number of layers."
             )
 
-        num_embeddings = config.target_vocab_size
-        padding_idx = config.PAD_IDX
+        num_embeddings = TARGET_VOCAB_SIZE
+        padding_idx = PAD_IDX
         self.embed_tokens = Embedding(num_embeddings, config.embedding_size, padding_idx)
 
         self.embed_positions = (
@@ -550,15 +548,3 @@ class ConvS2S(nn.Module):
         lprobs = decoder_out.view(-1, decoder_out.size(-1))
 
         return decoder_out , lprobs
-
-
-
-    # def forward(self, source, target):
-    #     # attn: batch, seq_len, hidden
-    #     # out: batch, seq_len, 2 * hidden_size
-    #     attn, source_seq_out = self.encoder(source)
-
-    #     # batch, seq_len_tgt, hidden_size
-    #     out = self.decocer(source, target, attn, source_seq_out)
-
-    #     return out

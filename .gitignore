@@ -3,7 +3,7 @@
 **/__pycache__
 project.zip
 Weights/
-cache/
+wandb/
 Logs/
 lightning_logs/
 *.zip

@@ -1,9 +1,9 @@
 import torch.nn as nn
 import sys
 sys.path.append(".")
-from Model_parts.MyTransformer_parts import MyTransformer
+from Networks.MyTransformer_parts import MyTransformer
 from torch.nn import Transformer as MyTransformer
-from Model_parts.MyTransformer_parts import PositionalEncoding, TokenEmbedding
+from Networks.MyTransformer_parts import PositionalEncoding, TokenEmbedding
 
 
 class TranslationModel(nn.Module):

@@ -3,6 +3,7 @@ from numpy import int64
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from config import PAD_IDX, SOURCE_VOCAB_SIZE, TARGET_VOCAB_SIZE
 
 
 class Encoder(nn.Module):
@@ -92,17 +93,16 @@ class RNNSearch(nn.Module):
     def __init__(self, config):
         super(RNNSearch, self).__init__()
 
-        self.dec_nhid = config.dec_nhid
-        self.BOS_IDX = config.BOS_IDX
-        self.EOS_IDX = config.EOS_IDX
-        self.PAD_IDX = config.PAD_IDX
-        self.PAD_IDX = config.PAD_IDX
-        
+        self.config = config
 
-        self.emb = nn.Embedding(config.target_vocab_size, config.dec_ninp, padding_idx=config.PAD_IDX)
-        self.encoder = Encoder(config.enc_ninp, config.enc_nhid, config.source_vocab_size, config.PAD_IDX, config.enc_emb_dropout, config.enc_hid_dropout)
+        self.check_name = f"RNNsearchModel"
+        self.log_name = f"RNNsearchModel-{self.config.enc_ninp}_ninp-{self.config.enc_nhid}_nhid-{self.config.dec_natt}_natt-{self.config.enc_emb_dropout}_drop"
+
+
+        self.emb = nn.Embedding(SOURCE_VOCAB_SIZE, config.dec_ninp, padding_idx=PAD_IDX)
+        self.encoder = Encoder(config.enc_ninp, config.enc_nhid, SOURCE_VOCAB_SIZE, PAD_IDX, config.enc_emb_dropout, config.enc_hid_dropout)
         self.decoder = VallinaDecoder(config.dec_ninp, config.dec_nhid, 2 * config.enc_nhid, config.dec_natt, config.nreadout, config.readout_dropout)
-        self.affine = nn.Linear(config.nreadout, config.target_vocab_size)
+        self.affine = nn.Linear(config.nreadout, TARGET_VOCAB_SIZE)
         
         self.init_affine = nn.Linear(2 * config.enc_nhid, config.dec_nhid)
         self.dec_emb_dp = nn.Dropout(config.dec_emb_dropout)

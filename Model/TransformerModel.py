@@ -1,23 +1,16 @@
 from re import X
 import sys
 sys.path.append("../")
-from distutils.command.config import config
-import os
-from cv2 import mean
-from sklearn.metrics import precision_recall_curve
 import torch
 from torch import Tensor, logit, nn
 import torch.nn.functional as F
 import pytorch_lightning as pl
-from torch.utils.data import DataLoader, random_split
-import torch.optim as optim
-from torch.autograd import Variable
-from Model_parts.TranslationModel import TranslationModel
-from Code.Utils.config import Config
-from Code.Utils import Config, Dictionary
+from Networks.TranslationModel import TranslationModel
+from data_loader import Dictionary
 from torchtext.data.metrics import bleu_score
 import numpy as np
 import pickle
+from config import PAD_IDX, GAP_IDX, SOURCE_VOCAB_SIZE, TARGET_VOCAB_SIZE
 
 class TransformerModel(pl.LightningModule):
     def __init__(self, config):
@@ -25,13 +18,13 @@ class TransformerModel(pl.LightningModule):
 
         self.check_name = f"TransformerModel-CrossEntropyLoss"
         self.config = config
-        self.log_name = f"TransformerModel-CrossEntropyLoss-{self.config.d_model}_dmodel-{self.config.num_encoder_layers}_layers-{self.config.dim_feedforward}_emb-{self.config.num_head}_head"
+        self.log_name = f"TransformerModel-{self.config.d_model}_dmodel-{self.config.num_encoder_layers}_layers-{self.config.dim_feedforward}_emb-{self.config.num_head}_head"
 
 
-        self.loss_fn = torch.nn.CrossEntropyLoss(ignore_index=self.config.PAD_IDX)
+        self.loss_fn = torch.nn.CrossEntropyLoss(ignore_index=PAD_IDX)
 
-        self.model = TranslationModel(src_vocab_size=config.source_vocab_size,
-                                         tgt_vocab_size=config.target_vocab_size,
+        self.model = TranslationModel(src_vocab_size=SOURCE_VOCAB_SIZE,
+                                         tgt_vocab_size=TARGET_VOCAB_SIZE,
                                          d_model=config.d_model,
                                          nhead=config.num_head,
                                          num_encoder_layers=config.num_encoder_layers,
@@ -63,8 +56,8 @@ class TransformerModel(pl.LightningModule):
         tgt_mask = self.generate_square_subsequent_mask(tgt_seq_len)
         src_mask = torch.zeros((src_seq_len, src_seq_len),device=self.device).type(torch.bool)
 
-        src_padding_mask = (src == self.config.PAD_IDX).transpose(0, 1)
-        tgt_padding_mask = (tgt == self.config.PAD_IDX).transpose(0, 1)
+        src_padding_mask = (src == PAD_IDX).transpose(0, 1)
+        tgt_padding_mask = (tgt == PAD_IDX).transpose(0, 1)
         return src_mask, tgt_mask, src_padding_mask, tgt_padding_mask
     
     def generate_square_subsequent_mask(self, sz):
@@ -159,8 +152,8 @@ class TransformerModel(pl.LightningModule):
         # 真实值
         y_ture = target[:-1,:].transpose(0, 1).reshape(-1)
 
-        y_pred = np.delete(Tensor.cpu(y_pred).numpy() , np.where(Tensor.cpu(y_pred).numpy() <= self.config.GAP_IDX))
-        y_ture = np.delete(Tensor.cpu(y_ture).numpy() , np.where(Tensor.cpu(y_ture).numpy() <= self.config.GAP_IDX))
+        y_pred = np.delete(Tensor.cpu(y_pred).numpy() , np.where(Tensor.cpu(y_ture).numpy() <= GAP_IDX))
+        y_ture = np.delete(Tensor.cpu(y_ture).numpy() , np.where(Tensor.cpu(y_ture).numpy() <= GAP_IDX))
 
         candidate = [str(i) for i in y_pred.tolist()]
         reference = [str(i) for i in y_ture.tolist()]
@@ -169,7 +162,7 @@ class TransformerModel(pl.LightningModule):
 
 
     def shared_step(self, batch, stage):
-        src, tgt = batch
+        src, tgt, tgt_length, isAligned = batch
 
         src = src.to(self.device)  # [src_len, batch_size]
         tgt = tgt.to(self.device)
@@ -181,13 +174,13 @@ class TransformerModel(pl.LightningModule):
         
         # logits 输出shape为[tgt_len,batch_size,tgt_vocab_size]
         logits = self.forward(
-            src=src,  # Encoder的token序列输入，[src_len,batch_size]
-            tgt=tgt_input,  # Decoder的token序列输入,[tgt_len,batch_size]
-            src_mask=src_mask,  # Encoder的注意力Mask输入，这部分其实对于Encoder来说是没有用的
-            tgt_mask=tgt_mask, # Decoder的注意力Mask输入，用于掩盖当前position之后的position [tgt_len,tgt_len]
-            src_key_padding_mask=src_padding_mask,  # 用于mask掉Encoder的Token序列中的padding部分
-            tgt_key_padding_mask=tgt_padding_mask,  # 用于mask掉Decoder的Token序列中的padding部分
-            memory_key_padding_mask=src_padding_mask)  # 用于mask掉Encoder的Token序列中的padding部分
+                                src=src,  # Encoder的token序列输入，[src_len,batch_size]
+                                tgt=tgt_input,  # Decoder的token序列输入,[tgt_len,batch_size]
+                                src_mask=src_mask,  # Encoder的注意力Mask输入，这部分其实对于Encoder来说是没有用的
+                                tgt_mask=tgt_mask, # Decoder的注意力Mask输入，用于掩盖当前position之后的position [tgt_len,tgt_len]
+                                src_key_padding_mask=src_padding_mask,  # 用于mask掉Encoder的Token序列中的padding部分
+                                tgt_key_padding_mask=tgt_padding_mask,  # 用于mask掉Decoder的Token序列中的padding部分
+                                memory_key_padding_mask=src_padding_mask)  # 用于mask掉Encoder的Token序列中的padding部分
     
 
         ### 计算loss
@@ -195,38 +188,41 @@ class TransformerModel(pl.LightningModule):
         loss = self.loss_fn(logits.reshape(-1, logits.shape[-1]), tgt_out.reshape(-1))
         # [tgt_len*batch_size, tgt_vocab_size] with [tgt_len*batch_size, ]
 
-        TP, FP, FN = self.confusion_matrix(src, logits, tgt_out, self.config.PAD_IDX)
         BLEU_SCORE = self.BLEU_score(logits, tgt_out)
+        result = {"loss": loss,
+                       "BLEU_SCORE":BLEU_SCORE}
+        
+        if isAligned:
+            TP, FP, FN = self.confusion_matrix(src, logits, tgt_out, PAD_IDX)
+            result["TP"] = TP
+            result["FP"] = FP
+            result["FN"] = FN
+        
+        return result
 
-        return {"loss": loss,
-                "TP": TP,
-                "FN": FN,
-                "FP": FP, 
-                "BLEU_SCORE":BLEU_SCORE
-                }
 
 
 
 
     def shared_epoch_end(self, outputs, stage):
+
         loss = torch.mean(torch.FloatTensor([i["loss"] for i in outputs]))
-        tp = torch.Tensor([x["TP"] for x in outputs]).to('cpu').sum().item()
-        fn = torch.Tensor([x["FN"] for x in outputs]).to('cpu').sum().item()
-        fp = torch.Tensor([x["FP"] for x in outputs]).to('cpu').sum().item()
         BLEU_SCORE = torch.Tensor([x["BLEU_SCORE"] for x in outputs]).to('cpu').mean().item()
-
-        precision = self.precision_score(tp, fp)
-        recall = self.recall_score(tp, fn)
-        f1 = self.f1_score(precision, recall)
-
         metrics = {
             f"{stage}_loss": loss.item(),
-            f"{stage}_precison": precision,
-            f"{stage}_recall": recall,
-            f"{stage}_f1": f1,
-            f"{stage}_BLEU_SCORE": BLEU_SCORE,
-        }
+            f"{stage}_BLEU_SCORE": BLEU_SCORE,}
         
+        if "TP" in outputs[0].keys():
+            tp = torch.Tensor([x["TP"] for x in outputs]).to('cpu').sum().item()
+            fn = torch.Tensor([x["FN"] for x in outputs]).to('cpu').sum().item()
+            fp = torch.Tensor([x["FP"] for x in outputs]).to('cpu').sum().item()
+            precision = self.precision_score(tp, fp)
+            recall = self.recall_score(tp, fn)
+            f1 = self.f1_score(precision, recall)
+            metrics[ f"{stage}_precison"] = precision
+            metrics[ f"{stage}_recall"] = recall
+            metrics[ f"{stage}_f1"] = f1
+
         self.log_dict(metrics, prog_bar=True)
         self.logger.log_metrics(metrics)
 
@@ -250,20 +246,16 @@ class TransformerModel(pl.LightningModule):
         return self.shared_epoch_end(outputs, "test")
 
     def configure_optimizers(self):
-        # optimizer = torch.optim.Adam(self.model.parameters(),
-        #                          lr=0.,
-        #                          betas=(self.config.beta1, self.config.beta2), eps=self.config.epsilon)
-
         # return torch.optim.Adam(self.parameters(), lr=1e-3)
-        weight_decay = 1e-6  # l2正则化系数
+        # weight_decay = 1e-6  # l2正则化系数
         # 假如有两个网络，一个encoder一个decoder
         # optimizer = torch.optim.Adam([{'encoder_params': self.encoder.parameters()}, {'decoder_params': self.decoder.parameters()}], lr=1e-3, weight_decay=weight_decay)
 
 
         # 同样，如果只有一个网络结构，就可以更直接了
-        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3, weight_decay=weight_decay)
+        optimizer = torch.optim.Adam(self.parameters(), lr=5e-4)
         # 我这里设置 2,4 个epoch后学习率变为原来的0.5，之后不再改变
 
-        StepLR = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[10], gamma=0.5)
+        StepLR = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[10,15,20,25], gamma=0.5)
         optim_dict = {'optimizer': optimizer, 'lr_scheduler': StepLR}
         return optim_dict

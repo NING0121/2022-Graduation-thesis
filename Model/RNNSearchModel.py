@@ -1,23 +1,16 @@
 import sys
-from turtle import backward
 sys.path.append("../")
-from distutils.command.config import config
-import os
-from cv2 import mean
-from sklearn.metrics import precision_recall_curve
 import torch
-from torch import logit, nn, Tensor
-import torch.nn.functional as F
+from torch import logit, nn, Tensor, tensor
 import pytorch_lightning as pl
-from torch.utils.data import DataLoader, random_split
-import torch.optim as optim
-from torch.autograd import Variable
-from Model_parts.RNNSearch import RNNSearch
-from Code.Utils.config import Config
-from Code.Utils import Config, Dictionary
+from Networks.RNNSearch import RNNSearch
+from data_loader import Dictionary
 from torchtext.data.metrics import bleu_score
 import numpy as np
+from torch.nn.utils.rnn import pad_sequence
 import pickle
+from config import PAD_IDX, BOS_IDX, EOS_IDX, GAP_IDX
+
 
 class RNNSearchModel(pl.LightningModule):
     def __init__(self, config):
@@ -25,9 +18,9 @@ class RNNSearchModel(pl.LightningModule):
 
         self.check_name = f"RNNsearchModel-CrossEntropyLoss"
         self.config = config
-        self.log_name = f"RNNsearchModel-CrossEntropyLoss-{self.config.enc_ninp}_ninp-{self.config.enc_nhid}_nhid-{self.config.dec_natt}_natt-{self.config.enc_emb_dropout}_drop"
+        self.log_name = f"RNNsearchModel-{self.config.enc_ninp}_ninp-{self.config.enc_nhid}_nhid-{self.config.dec_natt}_natt-{self.config.enc_emb_dropout}_drop"
 
-        self.loss_fn = torch.nn.CrossEntropyLoss(ignore_index=self.config.PAD_IDX)
+        self.loss_fn = torch.nn.CrossEntropyLoss(ignore_index=PAD_IDX)
 
         self.model = RNNSearch(self.config)
         
@@ -46,13 +39,22 @@ class RNNSearchModel(pl.LightningModule):
 
     def create_mask(self, vector):
 
-        vector_mask = (vector != self.config.PAD_IDX)
-
+        vector_mask = (vector != PAD_IDX)
         return vector_mask
     
-    def traverse(self, tensor):
+    def traverse(self, tensor,  PAD_IDX, tgt_lengths):
+        # 先去除所有的PAD
+        new_tensor = []
 
-        return tensor.flip([0])
+        for i, length in zip(tensor, tgt_lengths.cpu()):
+            i = i[:length]
+             # 倒序
+            new_tensor.append( i.flip(0) )
+
+        # PAD
+        tensor = pad_sequence(new_tensor, padding_value=PAD_IDX, batch_first=True)  # [de_len,batch_size]
+
+        return tensor
     
     def confusion_matrix(self, src, output, y_ture, PAD_IDX):
         """
@@ -84,9 +86,12 @@ class RNNSearchModel(pl.LightningModule):
         # 进一步筛选出来两序列对应字符不相同的变体字
         def idx_transform(idx): return self.src2tgt[idx] if idx in self.src2tgt.keys() else idx
         idx_transform = np.vectorize(idx_transform)
+
+
         x_target = idx_transform(x_origin.numpy()) # 由target字典索引表示的原始变体字序列，其中不在src2tgt字典中的索引保留原始的索引即可(已在上一步处理)
 
         x_target = torch.from_numpy(x_target).to(self.device)
+
         x_origin = x_origin.to(self.device)
         is_variant = torch.from_numpy(is_variant).to(self.device)
         is_variant = torch.logical_or(~torch.eq(x_target, y_ture), is_variant)
@@ -139,12 +144,11 @@ class RNNSearchModel(pl.LightningModule):
         # 预测值
         y_pred = decoder_out[:,1:-1].reshape(-1)
 
-
         # 真实值
         y_ture = y_ture[:,1:-1].reshape(-1)
 
-        y_pred = np.delete(Tensor.cpu(y_pred).numpy() , np.where(Tensor.cpu(y_pred).numpy() <= self.config.GAP_IDX))
-        y_ture = np.delete(Tensor.cpu(y_ture).numpy() , np.where(Tensor.cpu(y_ture).numpy() <= self.config.GAP_IDX))
+        y_pred = np.delete(Tensor.cpu(y_pred).numpy() , np.where(Tensor.cpu(y_ture).numpy() <= GAP_IDX))
+        y_ture = np.delete(Tensor.cpu(y_ture).numpy() , np.where(Tensor.cpu(y_ture).numpy() <= GAP_IDX))
 
         candidate = [str(i) for i in y_pred.tolist()]
         reference = [str(i) for i in y_ture.tolist()]
@@ -153,13 +157,13 @@ class RNNSearchModel(pl.LightningModule):
 
 
     def shared_step(self, batch, stage):
-        src, tgt = batch
+        src, tgt, tgt_length, isAligned = batch
 
         src = src.to(self.device).transpose(0, 1) # [batch_size, src_len]
         tgt = tgt.to(self.device).transpose(0, 1)
 
         forward_tgt = tgt
-        backward_tgt = self.traverse(tgt)
+        backward_tgt = self.traverse(tgt, PAD_IDX, tgt_length)
 
         src_mask = self.create_mask(src)
         forward_tgt_mask = self.create_mask(forward_tgt)
@@ -175,39 +179,39 @@ class RNNSearchModel(pl.LightningModule):
             b_trg=backward_tgt, 
             b_trg_mask=backward_tgt_mask)
         
-
-        # TP, FP, FN = self.confusion_matrix(src, output, forward_tgt, self.config.PAD_IDX)
         BLEU_SCORE = self.BLEU_score(output, forward_tgt)
-
-        return {"loss": loss.mean(),
-                # "TP": TP,
-                # "FN": FN,
-                # "FP": FP, 
-                "BLEU_SCORE":BLEU_SCORE
-                }
+        result = {"loss": loss.mean(),
+                       "BLEU_SCORE":BLEU_SCORE}
+        
+        if isAligned:
+            TP, FP, FN = self.confusion_matrix(src, output, forward_tgt, PAD_IDX)
+            result["TP"] = TP
+            result["FP"] = FP
+            result["FN"] = FN
+        
+        return result
 
 
 
 
     def shared_epoch_end(self, outputs, stage):
         loss = torch.mean(torch.FloatTensor([i["loss"] for i in outputs]))
-        # tp = torch.Tensor([x["TP"] for x in outputs]).to('cpu').sum().item()
-        # fn = torch.Tensor([x["FN"] for x in outputs]).to('cpu').sum().item()
-        # fp = torch.Tensor([x["FP"] for x in outputs]).to('cpu').sum().item()
         BLEU_SCORE = torch.Tensor([x["BLEU_SCORE"] for x in outputs]).to('cpu').mean().item()
-
-        # precision = self.precision_score(tp, fp)
-        # recall = self.recall_score(tp, fn)
-        # f1 = self.f1_score(precision, recall)
-
         metrics = {
             f"{stage}_loss": loss.item(),
-            # f"{stage}_precison": precision,
-            # f"{stage}_recall": recall,
-            # f"{stage}_f1": f1,
-            f"{stage}_BLEU_SCORE": BLEU_SCORE,
-        }
+            f"{stage}_BLEU_SCORE": BLEU_SCORE,}
         
+        if "TP" in outputs[0].keys():
+            tp = torch.Tensor([x["TP"] for x in outputs]).to('cpu').sum().item()
+            fn = torch.Tensor([x["FN"] for x in outputs]).to('cpu').sum().item()
+            fp = torch.Tensor([x["FP"] for x in outputs]).to('cpu').sum().item()
+            precision = self.precision_score(tp, fp)
+            recall = self.recall_score(tp, fn)
+            f1 = self.f1_score(precision, recall)
+            metrics[ f"{stage}_precison"] = precision
+            metrics[ f"{stage}_recall"] = recall
+            metrics[ f"{stage}_f1"] = f1
+
         self.log_dict(metrics, prog_bar=True)
         self.logger.log_metrics(metrics)
 
@@ -237,5 +241,11 @@ class RNNSearchModel(pl.LightningModule):
         # optimizer = torch.optim.Adam(self.model.parameters(),
         #                          lr=0.,
         #                          betas=(self.config.beta1, self.config.beta2), eps=self.config.epsilon)
+        weight_decay = 1e-6  # l2正则化系数
+    
+        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3, weight_decay=weight_decay)
 
-        return torch.optim.Adam(self.parameters(), lr=5e-4)
+        # 我这里设置 2,4 个epoch后学习率变为原来的0.5，之后不再改变
+        StepLR = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[2,4], gamma=0.5)
+        optim_dict = {'optimizer': optimizer, 'lr_scheduler': StepLR}
+        return optim_dict
