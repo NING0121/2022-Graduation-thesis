@@ -6,4 +6,5 @@ Weights/
 wandb/
 Logs/
 lightning_logs/
+test_run.out
 *.zip
