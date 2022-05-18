@@ -21,8 +21,8 @@ import wandb
 config = arg_parse()
                         
 # 数据集构建
-train_set = VariantWordDataset("train", config, isAligned=False, supply_ratio=0.5)
-valid_set = VariantWordDataset("test", config, isAligned=False)
+train_set = VariantWordDataset("train", config, isAligned=config.isAligned, supply_ratio=config.supply_ratio)
+valid_set = VariantWordDataset("test", config, isAligned=config.isAligned)
 print(f"Train size: {len(train_set)}")
 
 
@@ -34,11 +34,11 @@ valid_dataloader = DataLoader(valid_set, batch_size=config.batch_size, shuffle=F
 
 # Select the Model
 if config.model == 'RNNSearch':
-    model = RNNSearchModel()
+    model = RNNSearchModel(config)
 elif config.model == 'ConvS2S':
-    model = ConvS2SModel()
-elif config.model == 'Transfomer':
-    model = TransformerModel()
+    model = ConvS2SModel(config)
+elif config.model == 'Transformer':
+    model = TransformerModel(config)
 
 
 # wandb logger配置

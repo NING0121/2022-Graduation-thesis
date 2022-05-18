@@ -297,7 +297,7 @@ class VariantNW():
 
     def __is_punc(self, uchar):
         if self.punc_dict == None:
-            with open(pkg_resources.resource_filename(__name__, '../soundshapecode/zh_data/punc_dict.json'), 'r') as f:
+            with open(pkg_resources.resource_filename(__name__, './soundshapecode/zh_data/punc_dict.json'), 'r') as f:
                 self.punc_dict = json.loads(f.read())
         
         if uchar in self.punc_dict.keys() or uchar in self.punc_dict.values():

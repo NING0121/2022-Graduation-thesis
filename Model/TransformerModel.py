@@ -253,7 +253,7 @@ class TransformerModel(pl.LightningModule):
 
 
         # 同样，如果只有一个网络结构，就可以更直接了
-        optimizer = torch.optim.Adam(self.parameters(), lr=5e-4)
+        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
         # 我这里设置 2,4 个epoch后学习率变为原来的0.5，之后不再改变
 
         StepLR = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[10,15,20,25], gamma=0.5)

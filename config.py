@@ -39,7 +39,8 @@ def arg_parse():
     parser.add_argument('--lr', default=1e-5, help='')
     parser.add_argument('--batch_size', default=24, type=int, help='')
     parser.add_argument('--device', default="cuda:0" if cuda.is_available() else "cpu", type=str, help='')
-
+    parser.add_argument('--isAligned', default=False, type=bool, help='')
+    parser.add_argument('--supply_ratio',  default=1, type=float, help='')
 
     # Checkpoint
     parser.add_argument('--checkpoint_path', default='./Weights')
@@ -55,7 +56,7 @@ def arg_parse():
 
 
     # Model
-    parser.add_argument('--model', default='ConvS2S', choices = ['RNNSearch', 'ConvS2S', 'Transfomer'], help='Select a Model first.')
+    parser.add_argument('--model', default='ConvS2S', choices = ['RNNSearch', 'ConvS2S', 'Transformer'], help='Select a Model first.')
     # RNNSearch
     parser.add_argument('--enc_emb_dropout', default=0.3, help='hidden size')
     parser.add_argument('--dec_emb_dropout', default=0.3, help='attention weight size')
@@ -69,7 +70,7 @@ def arg_parse():
     parser.add_argument('--nreadout', default=310, type=int, help='')
     # Transformer
     parser.add_argument('--d_model', default=128, help='hidden size')
-    parser.add_argument('--num_head', default=8, help='attention weight size')
+    parser.add_argument('--num_head', default=4, help='attention weight size')
     parser.add_argument('--num_encoder_layers', default=3, help='')
     parser.add_argument('--num_decoder_layers', default=3 , help='')
     parser.add_argument('--dim_feedforward', default=256, type=int, help='')
