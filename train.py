@@ -42,6 +42,7 @@ elif config.model == 'Transformer':
 
 
 # wandb logger配置
+# project 修改为你需要的项目名
 wandb_logger = WandbLogger(project="variantWordDetection",
                     name = model.log_name,
                     save_dir = config.logs_path,
