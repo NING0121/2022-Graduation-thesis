@@ -377,7 +377,7 @@ class Dictionary(object):
 
 
 
-
+# 简单用例
 # if __name__== "__main__":
 #     variantNW = VariantNW()
     

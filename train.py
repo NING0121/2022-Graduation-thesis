@@ -44,9 +44,9 @@ elif config.model == 'Transformer':
 # wandb logger配置
 wandb_logger = WandbLogger(project="variantWordDetection",
                     name = model.log_name,
-                    save_dir = 'Logs',
-                    # log_model=True,
-                    offline=True
+                    save_dir = config.logs_path,
+                    log_model=True
+                    # offline=True
                     )
 
 # checkpoint保存
@@ -74,3 +74,15 @@ trainer.fit(
     train_dataloaders=train_dataloader, 
     val_dataloaders=valid_dataloader
 )
+
+"""
+命令行运行输入（有输出） 其他参数使用参考如下：
+python train.py --model RNNSearch --epochs 10 --batch_size 32 --lr 0.001 --isAligned True --supply_ratio 0.5
+python train.py --model ConvS2S --epochs 10 --batch_size 32 --lr 0.001 --isAligned True --supply_ratio 0.5
+python train.py --model Transformer --epochs 10 --batch_size 32 --lr 0.001 --isAligned True --supply_ratio 0.5
+
+命令行运行输入（无输出 nohup 后台运行）
+nohup python3 -u train.py --model RNNSearch --epochs 10 --batch_size 32 --lr 0.001 --isAligned True --supply_ratio 0.5 >test_run.out 2>&1 &
+nohup python3 -u train.py --model ConvS2S --epochs 10 --batch_size 32 --lr 0.001 --isAligned True --supply_ratio 0.5 >test_run.out 2>&1 &
+nohup python3 -u train.py --model Transformer --epochs 10 --batch_size 32 --lr 0.001 --isAligned True --supply_ratio 0.5 >test_run.out 2>&1 & 
+"""

@@ -16,8 +16,8 @@ class ConvS2SModel(pl.LightningModule):
     def __init__(self, config):
         super().__init__()
 
-        self.check_name = f"ConvS2SModel"
         self.config = config
+        self.check_name = f"ConvS2SModel"
         self.log_name = f"ConvS2SModel-{self.config.embedding_size}_emb-{self.config.out_embedding_size}_outEmb-{str(self.config.convolutions)}_conv"
         self.loss_fn = torch.nn.CrossEntropyLoss(ignore_index=PAD_IDX)
 
