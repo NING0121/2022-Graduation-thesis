@@ -2,7 +2,7 @@
 '''
 @File    :   VariantNeedleman-Wunsch.py
 @Time    :   2022/02/21 14:45:15
-@Author  :   jackfromeast 刘征宇 / NING 王楠楠 
+@Author  :   NING 王楠楠 
 @Version :   2.0
 @Contact :   1104120243@qq.com
 '''
@@ -377,7 +377,7 @@ class Dictionary(object):
 
 
 
-
+# 简单用例
 # if __name__== "__main__":
 #     variantNW = VariantNW()
     

@@ -35,7 +35,5 @@ Requirements.txt
 .gitignore
 setup.sh												// 安装所需 module
 ```
-
 ----
 
-具体暂未书写

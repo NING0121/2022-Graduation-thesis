@@ -16,7 +16,7 @@ class RNNSearchModel(pl.LightningModule):
     def __init__(self, config):
         super().__init__()
 
-        self.check_name = f"RNNsearchModel-CrossEntropyLoss"
+        self.check_name = f"RNNsearchModel"
         self.config = config
         self.log_name = f"RNNsearchModel-{self.config.enc_ninp}_ninp-{self.config.enc_nhid}_nhid-{self.config.dec_natt}_natt-{self.config.enc_emb_dropout}_drop"
 

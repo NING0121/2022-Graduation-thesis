@@ -42,31 +42,39 @@ elif config.model == 'Transformer':
 
 
 # wandb logger配置
+# project 修改为你需要的项目名
 wandb_logger = WandbLogger(project="variantWordDetection",
                     name = model.log_name,
-                    save_dir = 'Logs',
-                    # log_model=True,
-                    offline=True
+                    save_dir = config.logs_path,
+                    log_model=True
+                    # offline=True
                     )
 
 # checkpoint保存
 checkpoint_callback = ModelCheckpoint(
-    monitor="valid_BLEU_SCORE",
-    dirpath=f"Weights/Weights_{model.check_name}",
-    filename=f"{model.check_name}"+"-{epoch:02d}-{valid_f1:.2f}",
+    monitor = "valid_BLEU_SCORE",
+    dirpath = f"Weights/Weights_{model.check_name}",
+    filename = config.checkpoint_filename,
     save_top_k=3,
     mode="max",
 )
 
+# 是否使用 logger 
+if config.use_logger:
+    # trainer 定义
+    trainer = pl.Trainer(
+        max_epochs=config.epochs, 
+        gpus=1,
+        logger = wandb_logger,
+        callbacks=[checkpoint_callback]
+        )
 
-# trainer 定义
-trainer = pl.Trainer(
-    max_epochs=config.epochs, 
-    gpus=1,
-    logger = wandb_logger,
-    callbacks=[checkpoint_callback]
-    )
-
+else:
+    trainer = pl.Trainer(
+        max_epochs=config.epochs, 
+        gpus=1,
+        callbacks=[checkpoint_callback]
+        )
 
 # 训练
 trainer.fit(
@@ -74,3 +82,18 @@ trainer.fit(
     train_dataloaders=train_dataloader, 
     val_dataloaders=valid_dataloader
 )
+
+
+"""
+命令行运行输入(使用 logger)，添加参数 --use_logger
+
+命令行运行输入（有输出） 其他参数使用参考如下：
+python train.py --model RNNSearch --epochs 10 --batch_size 32 --lr 0.001 --isAligned True --supply_ratio 0.5
+python train.py --model ConvS2S --epochs 10 --batch_size 32 --lr 0.001 --isAligned True --supply_ratio 0.5
+python train.py --model Transformer --epochs 10 --batch_size 32 --lr 0.001 --isAligned True --supply_ratio 0.5
+
+命令行运行输入（无输出 nohup 后台运行）
+nohup python3 -u train.py --model RNNSearch --epochs 10 --batch_size 32 --lr 0.001 --isAligned True --supply_ratio 0.5 >test_run.out 2>&1 &
+nohup python3 -u train.py --model ConvS2S --epochs 10 --batch_size 32 --lr 0.001 --isAligned True --supply_ratio 0.5 >test_run.out 2>&1 &
+nohup python3 -u train.py --model Transformer --epochs 10 --batch_size 32 --lr 0.001 --isAligned True --supply_ratio 0.5 >test_run.out 2>&1 & 
+"""

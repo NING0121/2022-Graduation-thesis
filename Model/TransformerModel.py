@@ -16,7 +16,7 @@ class TransformerModel(pl.LightningModule):
     def __init__(self, config):
         super().__init__()
 
-        self.check_name = f"TransformerModel-CrossEntropyLoss"
+        self.check_name = f"TransformerModel"
         self.config = config
         self.log_name = f"TransformerModel-{self.config.d_model}_dmodel-{self.config.num_encoder_layers}_layers-{self.config.dim_feedforward}_emb-{self.config.num_head}_head"
 
